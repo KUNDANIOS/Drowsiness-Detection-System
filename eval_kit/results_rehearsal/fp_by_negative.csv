@@ -1,0 +1,5 @@
+normal_behaviour,total_seconds,false_eye_closure,false_yawn,false_head_lowering,false_side_turn,false_raised_hands,false_face_not_detected,false_looking_down
+normal,15.0,0,0,0,0,0,0,0
+talking,12.0,0,0,0,0,0,0,0
+mirror_glance,8.0,0,0,0,2,0,0,0
+fast_blinking,10.0,0,0,0,0,0,0,0

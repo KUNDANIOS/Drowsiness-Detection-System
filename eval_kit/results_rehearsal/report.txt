@@ -1,0 +1,16 @@
+Participants analysed: 1  (skipped: none)
+Recommended minimum for meaningful CIs: 8
+WARNING: few participants - CIs will be wide or missing; say so in the paper.
+
+cue                       events  detected  recall%  precision%  FW/min   median delay ms
+eye_closure                    1         1    100.0      100.0    0.00       4312
+yawn                           1         1    100.0      100.0    0.00       2703
+head_lowering                  1         0      0.0        0.0    0.00        n/a
+side_turn                      1         1    100.0       25.0    1.10       1812
+raised_hands                   1         1    100.0      100.0    0.00       2703
+face_not_detected              1         0      0.0        0.0    0.00        n/a
+looking_down                   1         1    100.0      100.0    0.00       2609
+
+Non-event (alert-free) footage: 1.8 min
+Latency: {"p50": 61.99999999999761, "p95": 93.99999999999409, "p99": 109.99999999999943, "mean": 57.78979143797883}
+Achieved fps (median per session): 10.010989010989011

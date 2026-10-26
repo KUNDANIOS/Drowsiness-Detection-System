@@ -1,7 +1,22 @@
 """
-DrowseGuard — Drowsiness Detector  v4.1
+DrowseGuard — Drowsiness Detector  v4.2
 
-Changes vs v4.0 (output JSON keys are unchanged; two keys were added:
+v4.2 — LOOKING DOWN vs EYES CLOSED
+  Low EAR alone cannot tell "eyes shut" from "eyes open but looking down at a
+  phone": both pull the eyelids down. When MediaPipe's eyeLookDown blendshape
+  is available, a low-EAR frame counts as eye CLOSURE only if the smoothed
+  eyeLookDown score is >= LOOKDOWN_CLOSED_MIN (closed lids drive that score
+  high). Otherwise it counts as LOOKING DOWN, and LOOKDOWN_FRAMES of those
+  raise the distraction alert ("Eyes off road") instead of a drowsy alert.
+  Without blendshapes the old EAR-only behaviour is used.
+  The numbers come from ONE person's webcam (diagnose_eyes.py: looking low
+  p90 = 0.49, eyes closed p10 = 0.76 -> threshold 0.62). Re-measure on other
+  people / cameras / lighting before relying on them.
+  Known trade-off: half-closed "droopy" eyelids no longer count as closure
+  (they look like looking down); only fully shut eyes do. Yawn and head-nod
+  detection are unaffected.
+
+Changes in v4.1 vs v4.0 (output JSON keys are unchanged; two keys were added:
 "calibration_failed" and "calibrating"):
 
   1. PERCLOS is only evaluated once the rolling window is mostly full
@@ -59,6 +74,12 @@ EAR_PERCLOS_THRESH   = 0.35     # >35% frames closed
 EAR_LOCK_FRAMES      = 5        # must stay over PERCLOS threshold for N frames
 EAR_SMOOTH_ALPHA     = 0.25
 
+# Looking down vs eyes closed (see module docstring)
+LOOKDOWN_CLOSED_MIN  = 0.62     # low-EAR frame is "closed" only if eyeLookDown >= this
+LOOKDOWN_SMOOTH_ALPHA = 0.35
+LOOKDOWN_FRAMES      = 20       # ~2s of looking-down frames -> distraction alert
+LOOKDOWN_RESET_FRAMES = 8
+
 # Calibration
 CAL_FRAMES           = 90       # valid samples to collect (~9s at 10fps)
 CAL_MAX_FRAMES       = 300      # give up after this many face frames (~30s)
@@ -88,6 +109,9 @@ YAW_HOLD_THRESH      = 0.25     # above this, eye/yawn/nod metrics are held (tun
 
 # Hands
 HAND_RAISED_FRAMES   = 15       # 1.5s with hands raised before alert
+HAND_MIN_HANDS       = 2        # alert only if this many hands are visible AND all raised
+HAND_REF_FACTOR      = 0.25     # hand must be above chin by this x face height (0.0 = chin level,
+                                # negative = a little below the chin also counts)
 HAND_RESET_FRAMES    = 10
 HAND_MODEL_PATH      = "hand_landmarker.task"
 HAND_MODEL_URL       = (
@@ -207,6 +231,16 @@ def get_jaw_blendshape(blendshapes):
     return None
 
 
+def get_eye_look_down(blendshapes):
+    """Mean of eyeLookDownLeft/Right, or None if the scores are unavailable."""
+    if not blendshapes or not blendshapes[0]:
+        return None
+    scores = {bs.category_name: float(bs.score) for bs in blendshapes[0]}
+    if "eyeLookDownLeft" in scores and "eyeLookDownRight" in scores:
+        return (scores["eyeLookDownLeft"] + scores["eyeLookDownRight"]) / 2.0
+    return None
+
+
 def calc_nose_y_norm(lm, w, h):
     ny  = lm[NOSE_TIP].y * h
     fy  = lm[FOREHEAD].y * h
@@ -242,9 +276,10 @@ def calc_face_yaw(lm, w, h):
 
 def calc_hand_raised(hand_result, lm, h):
     """
-    'raised'  — at least one hand is visible and EVERY visible hand is above
-                the reference line (chin minus 25% of face height)
-    'normal'  — no hands visible, or some visible hand is below the line
+    'raised'  — at least HAND_MIN_HANDS (2) hands are visible and ALL of them are
+                above the reference line (chin minus 25% of face height)
+    'normal'  — fewer than two hands visible (one raised hand is fine), or
+                some visible hand is below the line
     None      — hand detection unavailable
 
     Limitation: a camera can't see hands resting on the wheel or in the lap, so
@@ -257,16 +292,17 @@ def calc_hand_raised(hand_result, lm, h):
     chin_y = lm[CHIN].y * h
     fore_y = lm[FOREHEAD].y * h
     face_h = abs(chin_y - fore_y)
-    ref_y  = chin_y - face_h * 0.25
+    ref_y  = chin_y - face_h * HAND_REF_FACTOR
 
-    if not hand_result.hand_landmarks:
-        return 'normal'
+    if len(hand_result.hand_landmarks) < HAND_MIN_HANDS:
+        return 'normal'      # zero or one hand visible: don't alert
 
     raised_flags = []
     for hand_lm in hand_result.hand_landmarks:
-        key_pts = [hand_lm[i] for i in (0, 5, 9, 13, 17)]   # wrist + finger bases
-        cy = float(np.mean([p.y * h for p in key_pts]))
-        raised_flags.append(cy < ref_y)
+        # Highest point of the hand (normally a fingertip). A hand held up beside the
+        # face counts even if the wrist and palm are still at chin level.
+        top_y = min(p.y for p in hand_lm) * h
+        raised_flags.append(top_y < ref_y)
 
     return 'raised' if all(raised_flags) else 'normal'
 
@@ -290,6 +326,13 @@ class DrowsinessDetector:
         self.ear_fired        = False
         self.ear_clear        = 0
         self.ear_lock_count   = 0
+
+        # Looking down (eyes open, gaze low)
+        self.down_sm          = None
+        self.down_frames      = 0
+        self.down_alerting    = False
+        self.down_fired       = False
+        self.down_clear       = 0
 
         # MAR / yawn
         self.mar_sm           = None
@@ -386,6 +429,12 @@ class DrowsinessDetector:
         self.yaw_frames   = 0
         self.yaw_clear    = 0
 
+    def _clear_down(self):
+        self.down_alerting = False
+        self.down_fired    = False
+        self.down_frames   = 0
+        self.down_clear    = 0
+
     def _clear_hand(self):
         self.hand_alerting = False
         self.hand_fired    = False
@@ -410,9 +459,10 @@ class DrowsinessDetector:
 
         face_result = get_face_landmarker().detect(mp_img)
 
-        # Hand result is only used after calibration, with a face present.
+        # Hands are checked after calibration, also while the face is hidden:
+        # two hands in view + no face = hands covering the face.
         hand_result = None
-        if self.cal_done and face_result.face_landmarks:
+        if self.cal_done:
             hand_model = get_hand_landmarker()
             if hand_model is not None:
                 try:
@@ -434,9 +484,10 @@ class DrowsinessDetector:
             self.yaw_sm = None
             self.ear_window.clear()
             self.ear_lock_count = 0
+            self.down_sm        = None
+            self.down_frames    = 0
             self.mar_frames     = 0
             self.nod_frames     = 0
-            self.hand_frames    = 0
             self._clear_yaw()
             self.no_face_frames += 1
             self.status = "no_face"
@@ -446,8 +497,13 @@ class DrowsinessDetector:
                 self.dist_alerts += 1
                 self.no_face_fired = True
 
+            # Face hidden while two hands are in view = hands covering the face.
+            covered = (self.cal_done and hand_result is not None
+                       and len(hand_result.hand_landmarks) >= HAND_MIN_HANDS)
+            hand_alert = self._hand_state('raised' if covered else 'normal')
+
             return self._build(None, None, None, None,
-                               False, False, False, dist, False,
+                               False, False, False, dist, hand_alert,
                                perclos=0.0, jaw_raw=None)
 
         self.no_face_frames = 0
@@ -481,13 +537,14 @@ class DrowsinessDetector:
 
         # ── EYES / YAWN / NOD (held while head is turned) ──
         if self.yaw_sm > YAW_HOLD_THRESH:
-            eye_alert = yawn_alert = nod_alert = False
+            eye_alert = yawn_alert = nod_alert = down_alert = False
             perclos   = self._perclos()
             mar_display = self.mar_sm
             jaw_score = None
             nod_drop  = None
         else:
-            eye_alert, perclos = self._update_eyes(lm, w, h)
+            look_down = get_eye_look_down(face_result.face_blendshapes)
+            eye_alert, perclos, down_alert = self._update_eyes(lm, w, h, look_down)
             yawn_alert, mar_display, jaw_score = self._update_yawn(face_result, lm, w, h)
             nod_alert, nod_drop = self._update_nod(lm, w, h)
 
@@ -495,7 +552,7 @@ class DrowsinessDetector:
         hand_alert = self._update_hands(hand_result, lm, h)
 
         # ── OVERALL STATUS ────────────────────────────────
-        dist_alert = yaw_alert
+        dist_alert = yaw_alert or down_alert
 
         if self.ear_alerting or self.nod_alerting or self.mar_alerting:
             self.status = "drowsy"
@@ -545,11 +602,22 @@ class DrowsinessDetector:
         self.cal_done = True
 
     # ── per-signal updates ────────────────────────────────
-    def _update_eyes(self, lm, w, h):
+    def _update_eyes(self, lm, w, h, look_down=None):
+        """Returns (eye_alert, perclos, down_alert)."""
         raw_ear = (calc_ear(lm, LEFT_EYE, w, h) + calc_ear(lm, RIGHT_EYE, w, h)) / 2.0
         self.ear_sm = exp_smooth(self.ear_sm, raw_ear, EAR_SMOOTH_ALPHA)
+        if look_down is not None:
+            self.down_sm = exp_smooth(self.down_sm, look_down, LOOKDOWN_SMOOTH_ALPHA)
 
-        self.ear_window.append(1 if self.ear_sm < self.ear_thr else 0)
+        # A low-EAR frame is either "eyes closed" or "looking down with eyes open".
+        ear_low = self.ear_sm < self.ear_thr
+        looking_down_frame = (ear_low and self.down_sm is not None
+                              and self.down_sm < LOOKDOWN_CLOSED_MIN)
+        closed_frame = ear_low and not looking_down_frame
+
+        down_alert = self._update_look_down(looking_down_frame)
+
+        self.ear_window.append(1 if closed_frame else 0)
         perclos = self._perclos()
 
         eye_alert = False
@@ -569,7 +637,25 @@ class DrowsinessDetector:
                     self._clear_ear()
             else:
                 self.ear_clear = 0
-        return eye_alert, perclos
+        return eye_alert, perclos, down_alert
+
+    def _update_look_down(self, looking_down_frame):
+        """Sustained low-EAR + low eyeLookDown = eyes open but off the road."""
+        if looking_down_frame:
+            self.down_frames += 1
+            self.down_clear   = 0
+            if self.down_frames >= LOOKDOWN_FRAMES:
+                self.down_alerting = True
+                if not self.down_fired:
+                    self.dist_alerts += 1
+                    self.down_fired   = True
+        else:
+            self.down_frames = max(0, self.down_frames - 1)   # tolerate flicker
+            if self.down_alerting:
+                self.down_clear += 1
+                if self.down_clear >= LOOKDOWN_RESET_FRAMES:
+                    self._clear_down()
+        return self.down_alerting
 
     def _update_yawn(self, face_result, lm, w, h):
         jaw_score = get_jaw_blendshape(face_result.face_blendshapes)
@@ -629,8 +715,10 @@ class DrowsinessDetector:
         return nod_alert, nod_drop
 
     def _update_hands(self, hand_result, lm, h):
-        hand_alert  = False
-        hand_status = calc_hand_raised(hand_result, lm, h)
+        return self._hand_state(calc_hand_raised(hand_result, lm, h))
+
+    def _hand_state(self, hand_status):
+        hand_alert = False
 
         if hand_status == 'raised':
             self.hand_frames += 1
@@ -673,6 +761,9 @@ class DrowsinessDetector:
             "yaw":                   round(yaw_v,  4) if yaw_v  is not None else None,
             "jaw_raw":               round(jaw_raw, 4) if jaw_raw is not None else None,
             "perclos":               round(perclos, 3),
+            "look_down":             round(self.down_sm, 4) if self.down_sm is not None else None,
+            "down_alerting":         self.down_alerting,
+            "down_frames":           self.down_frames,
             "using_blendshape":      self.using_blendshape,
             "eye_alert":             eye_a,
             "yawn_alert":            yawn_a,

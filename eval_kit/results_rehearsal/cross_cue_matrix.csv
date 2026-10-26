@@ -1,0 +1,8 @@
+labelled_behaviour,n_events,alerts_of_eye_closure,alerts_of_yawn,alerts_of_head_lowering,alerts_of_side_turn,alerts_of_raised_hands,alerts_of_face_not_detected,alerts_of_looking_down
+eye_closure,1,1,0,0,0,0,0,0
+yawn,1,0,1,0,0,0,0,0
+head_lowering,1,0,0,0,0,0,1,0
+side_turn,1,0,0,0,1,0,0,0
+raised_hands,1,0,0,0,0,1,0,0
+face_not_detected,1,0,0,0,1,0,0,0
+looking_down,1,0,0,1,0,0,0,1

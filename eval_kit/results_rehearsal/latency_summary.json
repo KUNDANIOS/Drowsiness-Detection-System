@@ -1,0 +1,24 @@
+{
+  "frames": 1822,
+  "capture_to_response_ms": {
+    "p50": 61.99999999999761,
+    "p95": 93.99999999999409,
+    "p99": 109.99999999999943,
+    "mean": 57.78979143797883
+  },
+  "jpeg_encode_ms": {
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 15.000000000011795,
+    "mean": 0.2486278814489666
+  },
+  "post_to_response_ms": {
+    "p50": 61.99999999999761,
+    "p95": 93.99999999999409,
+    "p99": 109.99999999999943,
+    "mean": 57.54116355652986
+  },
+  "achieved_fps_median": 10.010989010989011,
+  "achieved_fps_min": 10.010989010989011,
+  "note": "post_to_response = network + server inference + decision (cannot be split without server timestamps)"
+}

@@ -1,0 +1,52 @@
+{
+  "participant": "TEST",
+  "role": "dev",
+  "complete": true,
+  "calibration_failed": false,
+  "glasses": "unknown",
+  "lighting": "unknown",
+  "camera_distance_cm": "unknown",
+  "camera_height": "unknown",
+  "notes": "",
+  "seed": 50648,
+  "reps": 1,
+  "synthetic": false,
+  "scoring": {
+    "prep_s": 3.0,
+    "tol_s": 2.0,
+    "rest_s": 6.0,
+    "time_scale": 1.0
+  },
+  "schedule_start_s": 11.0,
+  "calibration_done_s": 9.0,
+  "frames_sent": 1822,
+  "frames_failed": 0,
+  "has_looking_down": true,
+  "achieved_fps_overall": 9.99,
+  "environment": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.10",
+    "processor": "AMD64 Family 23 Model 104 Stepping 1, AuthenticAMD",
+    "machine": "AMD64",
+    "client_git_commit": "d4bf818fdfa1a988afc91ec0c0acad38b1b5f239",
+    "server": "http://127.0.0.1:5000",
+    "server_status": {
+      "current_status": "no_face",
+      "frames_processed": 0,
+      "server": "running",
+      "total_eye_alerts": 0,
+      "total_nod_alerts": 0,
+      "total_yawn_alerts": 0
+    },
+    "camera_resolution": [
+      640,
+      480
+    ],
+    "jpeg_quality": 70,
+    "target_fps": 10.0,
+    "opencv-python-headless": "4.12.0.88",
+    "numpy": "2.2.6",
+    "mediapipe": "0.10.32",
+    "flask": "3.1.2"
+  }
+}
